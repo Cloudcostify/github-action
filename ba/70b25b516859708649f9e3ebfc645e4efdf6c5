@@ -1,0 +1,25 @@
+action.yml
+  h_aa722e8ed10195 3,5,13
+  s_20c8f7ce22932a::t_da7e036897f817 6
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "ba70b25b516859708649f9e3ebfc645e4efdf6c5",
+  "prompts": {},
+  "humans": {
+    "h_aa722e8ed10195": {
+      "author": "Casper Rubæk <9870550+Trubador@users.noreply.github.com>"
+    }
+  },
+  "sessions": {
+    "s_20c8f7ce22932a": {
+      "agent_id": {
+        "tool": "github-copilot",
+        "id": "1deafd55-f65f-4e8c-9c80-84bd27761643",
+        "model": "gpt-5-mini"
+      },
+      "human_author": "Casper Rubæk <9870550+Trubador@users.noreply.github.com>"
+    }
+  }
+}
