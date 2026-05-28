@@ -1,0 +1,14 @@
+action.yml
+  h_aa722e8ed10195 3
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "7dd0efd54fbed34391d8caa63539de2d6b124735",
+  "prompts": {},
+  "humans": {
+    "h_aa722e8ed10195": {
+      "author": "Casper Rubæk <9870550+Trubador@users.noreply.github.com>"
+    }
+  }
+}
