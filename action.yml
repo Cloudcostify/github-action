@@ -25,13 +25,16 @@ inputs:
     description: 'Pulumi access token. Only required when provider is pulumi'
     required: false
   budget:
-    description: 'Monthly budget limit in USD. When the estimated cost exceeds this value, budget-exceeded is set to true'
+    description: 'Monthly budget limit in USD (non-negative number). When the estimated cost exceeds this value, budget-exceeded is set to true'
     required: false
   markdown-output:
     description: 'File path to write a Markdown cost report (e.g. cloudcostify-report.md)'
     required: false
   cli-version:
-    description: 'Version of the Cloudcostify CLI to download. Use a release tag (e.g. v1.0.0) or "latest"'
+    description: >-
+      Version of the Cloudcostify CLI to download. Use a release tag (e.g. v1.0.0) or "latest".
+      "latest" resolves to whatever tag is newest at run time, which is convenient but not
+      reproducible; pin an explicit tag for production use once a stable release exists.
     required: false
     default: 'latest'
 
@@ -43,59 +46,95 @@ outputs:
 runs:
   using: 'composite'
   steps:
-    - name: Download Cloudcostify CLI
-      id: download-cli
+    - name: Validate inputs and resolve platform
+      id: platform
       shell: bash
+      env:
+        INPUT_CLI_VERSION: ${{ inputs.cli-version }}
+        INPUT_PROVIDER: ${{ inputs.provider }}
+        INPUT_BUDGET: ${{ inputs.budget }}
       run: |
-        VERSION="${{ inputs.cli-version }}"
+        set -euo pipefail
+        source "${{ github.action_path }}/scripts/lib.sh"
 
+        # Validate everything that does not require a network call first, so
+        # a malformed input fails fast without ever contacting GitHub.
+        validate_cli_version "$INPUT_CLI_VERSION"
+        validate_provider "$INPUT_PROVIDER"
+        validate_budget "$INPUT_BUDGET"
+
+        VERSION="$INPUT_CLI_VERSION"
         if [ "$VERSION" = "latest" ]; then
           VERSION=$(curl -sSfL \
             -H "Accept: application/vnd.github+json" \
             "https://api.github.com/repos/cloudcostify/cli/releases/latest" \
             | grep '"tag_name"' | sed -E 's/.*"([^"]+)".*/\1/')
+          validate_cli_version "$VERSION"
         fi
 
-        echo "Downloading Cloudcostify CLI $VERSION"
+        RID=$(detect_rid)
+        BINARY=$(binary_filename "$RID")
 
-        OS=$(uname -s | tr '[:upper:]' '[:lower:]')
-        ARCH=$(uname -m)
+        echo "Resolved Cloudcostify CLI ${VERSION} for ${RID}"
 
-        if [ "$ARCH" = "x86_64" ]; then ARCH="x64"; fi
-        if [ "$ARCH" = "aarch64" ] || [ "$ARCH" = "arm64" ]; then ARCH="arm64"; fi
+        {
+          echo "rid=${RID}"
+          echo "binary=${BINARY}"
+          echo "version=${VERSION}"
+        } >> "$GITHUB_OUTPUT"
 
-        case "$OS" in
-          linux)  RID="linux-$ARCH" ;;
-          darwin) RID="osx-$ARCH" ;;
-          *)      RID="win-$ARCH" ;;
-        esac
+    - name: Download and verify Cloudcostify CLI
+      id: download-cli
+      shell: bash
+      env:
+        RID: ${{ steps.platform.outputs.rid }}
+        BINARY: ${{ steps.platform.outputs.binary }}
+        VERSION: ${{ steps.platform.outputs.version }}
+      run: |
+        set -euo pipefail
+        source "${{ github.action_path }}/scripts/lib.sh"
 
-        BINARY="cloudcostify-$RID"
-        DOWNLOAD_URL="https://github.com/cloudcostify/cli/releases/download/$VERSION/$BINARY"
+        BASE_URL="https://github.com/cloudcostify/cli/releases/download/${VERSION}"
+        BINARY_PATH="${RUNNER_TEMP}/${BINARY}"
+        SUMS_PATH="${RUNNER_TEMP}/SHA256SUMS"
 
-        echo "Fetching: $DOWNLOAD_URL"
-        curl -sSfL "$DOWNLOAD_URL" -o "$RUNNER_TEMP/cloudcostify"
-        chmod +x "$RUNNER_TEMP/cloudcostify"
+        echo "Fetching: ${BASE_URL}/${BINARY}"
+        curl -sSfL "${BASE_URL}/${BINARY}" -o "$BINARY_PATH"
+        curl -sSfL "${BASE_URL}/SHA256SUMS" -o "$SUMS_PATH"
 
-        echo "cli-path=$RUNNER_TEMP/cloudcostify" >> "$GITHUB_OUTPUT"
+        verify_checksum "$BINARY_PATH" "$BINARY" "$SUMS_PATH"
+
+        chmod +x "$BINARY_PATH"
+        echo "cli-path=${BINARY_PATH}" >> "$GITHUB_OUTPUT"
 
     - name: Run Cloudcostify CLI
       id: run-cli
       shell: bash
-      run: |
-        ARGS="--provider ${{ inputs.provider }} --directory ${{ inputs.working-directory }}"
-
-        if [ -n "${{ inputs.budget }}" ]; then
-          ARGS="$ARGS --budget ${{ inputs.budget }}"
-        fi
-
-        if [ -n "${{ inputs.markdown-output }}" ]; then
-          ARGS="$ARGS --out-markdown ${{ inputs.markdown-output }}"
-        fi
-
-        "${{ steps.download-cli.outputs.cli-path }}" $ARGS
       env:
+        CLI_PATH: ${{ steps.download-cli.outputs.cli-path }}
+        INPUT_PROVIDER: ${{ inputs.provider }}
+        INPUT_WORKING_DIRECTORY: ${{ inputs.working-directory }}
+        INPUT_BUDGET: ${{ inputs.budget }}
+        INPUT_MARKDOWN_OUTPUT: ${{ inputs.markdown-output }}
         CLOUDCOSTIFY_API_KEY: ${{ inputs.api-key }}
         CLOUDCOSTIFY_PULUMI_PROJECT_STACK_NAME: ${{ inputs.stack-name }}
         CLOUDCOSTIFY_PULUMI_PROJECT_DIRECTORY_PATH: ${{ inputs.working-directory }}
         PULUMI_ACCESS_TOKEN: ${{ inputs.pulumi-access-token }}
+      run: |
+        set -euo pipefail
+        source "${{ github.action_path }}/scripts/lib.sh"
+
+        validate_provider "$INPUT_PROVIDER"
+        validate_budget "$INPUT_BUDGET"
+
+        args=(--provider "$INPUT_PROVIDER" --directory "$INPUT_WORKING_DIRECTORY")
+
+        if [[ -n "$INPUT_BUDGET" ]]; then
+          args+=(--budget "$INPUT_BUDGET")
+        fi
+
+        if [[ -n "$INPUT_MARKDOWN_OUTPUT" ]]; then
+          args+=(--out-markdown "$INPUT_MARKDOWN_OUTPUT")
+        fi
+
+        "$CLI_PATH" "${args[@]}"

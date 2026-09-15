@@ -1,0 +1,82 @@
+name: Test composite action
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  shellcheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: ShellCheck
+        uses: ludeeus/action-shellcheck@2.0.0
+        with:
+          scandir: './scripts'
+          additional_files: 'tests/lib_test.sh'
+
+  actionlint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: actionlint
+        uses: raven-actions/actionlint@v2
+
+  unit-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run lib.sh unit tests
+        run: bash tests/lib_test.sh
+
+  validation-e2e:
+    needs: unit-tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Action rejects unsupported provider
+        id: bad-provider
+        uses: ./
+        continue-on-error: true
+        with:
+          api-key: dummy-key-not-a-secret
+          provider: aws
+      - name: Assert the unsupported-provider run failed
+        if: steps.bad-provider.outcome != 'failure'
+        run: |
+          echo "::error::Expected the action to fail for an unsupported provider" >&2
+          exit 1
+
+      - name: Action rejects a negative budget
+        id: bad-budget
+        uses: ./
+        continue-on-error: true
+        with:
+          api-key: dummy-key-not-a-secret
+          budget: '-5'
+      - name: Assert the invalid-budget run failed
+        if: steps.bad-budget.outcome != 'failure'
+        run: |
+          echo "::error::Expected the action to fail for a negative budget" >&2
+          exit 1
+
+      - name: Action rejects a malformed cli-version
+        id: bad-version
+        uses: ./
+        continue-on-error: true
+        with:
+          api-key: dummy-key-not-a-secret
+          cli-version: 'not-a-version'
+      - name: Assert the invalid-cli-version run failed
+        if: steps.bad-version.outcome != 'failure'
+        run: |
+          echo "::error::Expected the action to fail for a malformed cli-version" >&2
+          exit 1
+
+      - name: Note on end-to-end download/checksum coverage
+        run: |
+          echo "::notice::Cloudcostify/cli has not published a release yet, so the download-and-verify path cannot be exercised end-to-end here. scripts/lib.sh's verify_checksum is covered directly by tests/lib_test.sh; re-run this job's scope once a real release with SHA256SUMS exists."
